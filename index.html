@@ -80,7 +80,19 @@ function goBack(code){
   var url = decodeURIComponent(BACK);
   url += (url.indexOf('?')>-1 ? '&' : '?') + 'page=' + encodeURIComponent(PAGE);
   if(code) url += '&code=' + encodeURIComponent(code) + '&from=scan';
+  try{ if(window.top && window.top!==window){ window.top.location.replace(url); return; } }catch(e){}
   location.replace(url);
+}
+
+/* ถ้าหน้านี้ถูกเปิดอยู่ในกรอบของเว็บอื่น กล้องจะถูกบล็อก — ต้องเปิดเต็มจอเท่านั้น */
+function framed(){ try{ return window.top !== window.self; }catch(e){ return true; } }
+function warnFramed(){
+  var el=$('err'); el.classList.remove('hide');
+  el.innerHTML='⚠ หน้านี้กำลังถูกเปิดอยู่ในกรอบของเว็บอื่น กล้องจะใช้ไม่ได้<br>'+
+    '<a href="'+location.href.replace(/"/g,'&quot;')+'" target="_top" '+
+    'style="display:inline-block;margin-top:9px;background:#1f6f43;color:#fff;padding:12px 18px;'+
+    'border-radius:10px;text-decoration:none;font-weight:700">เปิดหน้านี้เต็มจอ</a>';
+  $('video').style.display='none'; $('ret').style.display='none'; $('msg').textContent='';
 }
 function useManual(){
   var v=$('manual').value.trim();
@@ -142,7 +154,7 @@ function fail(m){
   $('msg').textContent='';
   var el=$('err'); el.classList.remove('hide'); el.textContent='⚠ '+m+' — พิมพ์รหัสด้านล่างแทนได้';
 }
-window.addEventListener('load', start);
+window.addEventListener('load', function(){ if(framed()) warnFramed(); else start(); });
 </script>
 </body>
 </html>
