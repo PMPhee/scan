@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>สแกนบัตรนักเรียน</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<link rel="icon" href="data:,">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap');
+  :root{ --brand:#1f6f43; --blue:#2b6cb0; --ink:#1b2126; --ink2:#4a5560; --ink3:#7c8792;
+         --bg:#f2f5f7; --warn-bg:#fff3cd; --warn-bd:#d4a017; }
+  *{ box-sizing:border-box; font-family:'Sarabun',sans-serif; -webkit-tap-highlight-color:transparent; }
+  body{ margin:0; background:var(--bg); color:var(--ink); }
+  .top{ background:var(--brand); color:#fff; padding:11px 14px; font-size:15px; font-weight:700; }
+  .top small{ display:block; font-weight:400; font-size:12px; opacity:.9; margin-top:2px; }
+  .wrap{ max-width:620px; margin:0 auto; padding:12px; }
+  .card{ background:#fff; border-radius:13px; padding:14px; margin-bottom:10px; box-shadow:0 1px 3px rgba(0,0,0,.07); }
+  h2{ margin:0 0 9px; font-size:16px; color:var(--brand); }
+  .btn{ background:var(--brand); color:#fff; border:0; padding:14px 16px; border-radius:10px; cursor:pointer;
+        font-size:16px; font-weight:700; width:100%; touch-action:manipulation; }
+  .btn.blue{ background:var(--blue); } .btn.ghost{ background:#eef1f4; color:var(--ink2); }
+  .muted{ color:var(--ink3); font-size:12.5px; } .hide{ display:none !important; }
+  input[type=text]{ width:100%; padding:14px; border:2px solid #cdd5dd; border-radius:10px;
+                    font-size:22px; font-weight:700; text-align:center; letter-spacing:2px; }
+  #video{ width:100%; border-radius:12px; background:#000; aspect-ratio:3/4; object-fit:cover; }
+  .camwrap{ position:relative; }
+  .reticle{ position:absolute; left:8%; right:8%; top:38%; bottom:38%; border:3px solid rgba(255,255,255,.9);
+            border-radius:10px; box-shadow:0 0 0 2000px rgba(0,0,0,.3); pointer-events:none; }
+  .hit{ background:#d8ecdf; border:2px solid #4c9a76; border-radius:12px; padding:16px; text-align:center;
+        font-size:20px; font-weight:700; color:var(--brand); }
+  .err{ background:var(--warn-bg); border:1px solid var(--warn-bd); border-radius:10px; padding:11px;
+        font-size:13.5px; color:#7a5600; margin-top:9px; }
+  .row{ display:flex; gap:8px; margin-top:9px; } .row>*{ flex:1; }
+</style>
+</head>
+<body>
+<div class="top">สแกนบัตรนักเรียน<small id="sub">ระบบขออนุญาตออกนอกบริเวณโรงเรียน</small></div>
+
+<div class="wrap">
+  <div class="card" id="camCard">
+    <div class="camwrap">
+      <video id="video" playsinline muted></video>
+      <div class="reticle" id="ret"></div>
+    </div>
+    <div id="msg" class="muted" style="margin-top:9px;text-align:center">กำลังเปิดกล้อง…</div>
+    <div id="err" class="err hide"></div>
+    <div class="row">
+      <button class="btn ghost" onclick="switchCam()" id="swBtn">สลับกล้อง</button>
+      <button class="btn blue" onclick="goBack('')">กลับหน้าระบบ</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>หรือพิมพ์รหัสนักเรียน</h2>
+    <input type="text" id="manual" inputmode="numeric" autocomplete="off" placeholder="เช่น 05849">
+    <button class="btn" style="margin-top:9px" onclick="useManual()">ใช้รหัสนี้</button>
+  </div>
+
+  <p class="muted" style="text-align:center;line-height:1.7">
+    หน้านี้ทำหน้าที่อ่านบาร์โค้ดอย่างเดียว ไม่เก็บและไม่ส่งข้อมูลนักเรียนไปที่ใด<br>
+    เมื่ออ่านได้จะพากลับเข้าระบบของโรงเรียนทันที
+  </p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+<script>
+function qp(k){ try{ return new URLSearchParams(location.search).get(k)||''; }catch(e){ return ''; } }
+var BACK = qp('back');           // URL ของเว็บแอป Apps Script (encode มาแล้ว)
+var PAGE = qp('page') || 'out';  // out = เช็คเอาต์ · in = เช็คอิน
+document.getElementById('sub').textContent = (PAGE==='in' ? 'เช็คอิน กลับเข้าโรงเรียน' : 'เช็คเอาต์ ออกนอกบริเวณ');
+
+function $(id){ return document.getElementById(id); }
+function beep(f,ms){ try{ var AC=new (window.AudioContext||window.webkitAudioContext)();
+  var o=AC.createOscillator(),g=AC.createGain(); o.frequency.value=f; o.connect(g); g.connect(AC.destination);
+  g.gain.setValueAtTime(0.2,AC.currentTime); g.gain.exponentialRampToValueAtTime(0.001,AC.currentTime+ms/1000);
+  o.start(); o.stop(AC.currentTime+ms/1000);}catch(e){} }
+
+function goBack(code){
+  if(!BACK){ alert('ไม่พบลิงก์ของระบบ — เปิดหน้านี้จากปุ่มในระบบเท่านั้น'); return; }
+  var url = decodeURIComponent(BACK);
+  url += (url.indexOf('?')>-1 ? '&' : '?') + 'page=' + encodeURIComponent(PAGE);
+  if(code) url += '&code=' + encodeURIComponent(code) + '&from=scan';
+  try{ if(window.top && window.top!==window){ window.top.location.replace(url); return; } }catch(e){}
+  location.replace(url);
+}
+
+/* ถ้าหน้านี้ถูกเปิดอยู่ในกรอบของเว็บอื่น กล้องจะถูกบล็อก — ต้องเปิดเต็มจอเท่านั้น */
+function framed(){ try{ return window.top !== window.self; }catch(e){ return true; } }
+function warnFramed(){
+  var el=$('err'); el.classList.remove('hide');
+  el.innerHTML='⚠ หน้านี้กำลังถูกเปิดอยู่ในกรอบของเว็บอื่น กล้องจะใช้ไม่ได้<br>'+
+    '<a href="'+location.href.replace(/"/g,'&quot;')+'" target="_top" '+
+    'style="display:inline-block;margin-top:9px;background:#1f6f43;color:#fff;padding:12px 18px;'+
+    'border-radius:10px;text-decoration:none;font-weight:700">เปิดหน้านี้เต็มจอ</a>';
+  $('video').style.display='none'; $('ret').style.display='none'; $('msg').textContent='';
+}
+function useManual(){
+  var v=$('manual').value.trim();
+  if(!v){ $('manual').focus(); return; }
+  goBack(v);
+}
+$('manual').addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.preventDefault(); useManual(); } });
+
+/* ---------- กล้อง ---------- */
+var reader=null, devices=[], devIdx=0, done=false;
+function hints(){
+  var h=new Map();
+  h.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[
+    ZXing.BarcodeFormat.QR_CODE, ZXing.BarcodeFormat.CODE_128, ZXing.BarcodeFormat.CODE_39,
+    ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.EAN_8, ZXing.BarcodeFormat.ITF,
+    ZXing.BarcodeFormat.CODABAR, ZXing.BarcodeFormat.DATA_MATRIX, ZXing.BarcodeFormat.PDF_417 ]);
+  h.set(ZXing.DecodeHintType.TRY_HARDER,true);
+  return h;
+}
+function onHit(text){
+  if(done) return; done=true;
+  beep(1180,120);
+  try{ if(navigator.vibrate) navigator.vibrate(50); }catch(e){}
+  $('camCard').innerHTML='<div class="hit">อ่านได้: '+String(text).replace(/[<>&]/g,'')+'<br><span style="font-size:13px;font-weight:400">กำลังพากลับเข้าระบบ…</span></div>';
+  try{ if(reader) reader.reset(); }catch(e){}
+  setTimeout(function(){ goBack(text); }, 350);
+}
+function start(){
+  if(!window.ZXing){ fail('โหลดตัวอ่านบาร์โค้ดไม่สำเร็จ — ตรวจสัญญาณอินเทอร์เน็ต'); return; }
+  reader = reader || new ZXing.BrowserMultiFormatReader(hints(), 300);
+  var constraints = devices.length
+    ? { video:{ deviceId:{ exact: devices[devIdx].deviceId }, width:{ideal:1280} } }
+    : { video:{ facingMode:{ideal:'environment'}, width:{ideal:1280} } };
+  reader.decodeFromConstraints(constraints, 'video', function(res){ if(res) onHit(res.getText()); })
+    .then(function(){
+      $('msg').textContent='เล็งบาร์โค้ดหรือ QR ให้อยู่ในกรอบ';
+      ZXing.BrowserCodeReader.listVideoInputDevices().then(function(d){
+        devices=d||[]; $('swBtn').classList.toggle('hide', devices.length<2);
+      }).catch(function(){});
+    })
+    .catch(function(e){ fail(reason(e)); });
+}
+function switchCam(){
+  if(devices.length<2) return;
+  devIdx=(devIdx+1)%devices.length;
+  try{ reader.reset(); }catch(e){}
+  start();
+}
+function reason(e){
+  var n=(e&&(e.name||e.message))||'';
+  if(/NotAllowed|Permission|denied/i.test(n))
+    return 'คุณกดปฏิเสธสิทธิ์กล้องไว้ — แตะรูปแม่กุญแจข้างช่อง URL แล้วเปลี่ยน "กล้อง" เป็นอนุญาต จากนั้นรีเฟรชหน้านี้';
+  if(/NotFound|Overconstrained/i.test(n)) return 'ไม่พบกล้องบนเครื่องนี้';
+  if(/NotReadable|TrackStart/i.test(n)) return 'กล้องถูกแอปอื่นใช้อยู่ ปิดแอปกล้อง/วิดีโอคอลแล้วรีเฟรช';
+  return 'เปิดกล้องไม่สำเร็จ: '+n;
+}
+function fail(m){
+  $('video').style.display='none'; $('ret').style.display='none';
+  $('msg').textContent='';
+  var el=$('err'); el.classList.remove('hide'); el.textContent='⚠ '+m+' — พิมพ์รหัสด้านล่างแทนได้';
+}
+window.addEventListener('load', function(){ if(framed()) warnFramed(); else start(); });
+</script>
+</body>
+</html>
