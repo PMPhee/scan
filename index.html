@@ -67,7 +67,9 @@
 function qp(k){ try{ return new URLSearchParams(location.search).get(k)||''; }catch(e){ return ''; } }
 var BACK = qp('back');           // URL ของเว็บแอป Apps Script (encode มาแล้ว)
 var PAGE = qp('page') || 'out';  // out = เช็คเอาต์ · in = เช็คอิน
-document.getElementById('sub').textContent = (PAGE==='in' ? 'เช็คอิน กลับเข้าโรงเรียน' : 'เช็คเอาต์ ออกนอกบริเวณ');
+var SCAN_VER = 'SCAN-R2';
+document.getElementById('sub').textContent =
+  (PAGE==='in' ? 'เช็คอิน กลับเข้าโรงเรียน' : 'เช็คเอาต์ ออกนอกบริเวณ') + ' · ' + SCAN_VER;
 
 function $(id){ return document.getElementById(id); }
 function beep(f,ms){ try{ var AC=new (window.AudioContext||window.webkitAudioContext)();
@@ -120,18 +122,49 @@ function onHit(text){
   try{ if(reader) reader.reset(); }catch(e){}
   setTimeout(function(){ goBack(text); }, 350);
 }
+/* นับกล้องบนเครื่อง — ห้ามให้ฟังก์ชันนี้ทำให้กล้องที่เปิดได้แล้วดับ
+   จึงห่อ try/catch ทุกชั้น และไม่โยน error ออกไปไหนเด็ดขาด */
+function listCams(){
+  function apply(d){
+    try{ devices = d || []; $('swBtn').classList.toggle('hide', devices.length < 2); }catch(e){}
+  }
+  var p = null;
+  try{
+    if (reader && typeof reader.listVideoInputDevices === 'function') {
+      p = reader.listVideoInputDevices();                       // 0.21.x = instance method
+    } else if (window.ZXing && ZXing.BrowserCodeReader &&
+               typeof ZXing.BrowserCodeReader.listVideoInputDevices === 'function') {
+      p = ZXing.BrowserCodeReader.listVideoInputDevices();      // เวอร์ชันเก่า = static
+    } else if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+      p = navigator.mediaDevices.enumerateDevices().then(function(all){
+        return (all||[]).filter(function(x){ return x.kind === 'videoinput'; });
+      });
+    }
+  }catch(e){ p = null; }
+  if (p && typeof p.then === 'function') {
+    try{ p.then(apply).catch(function(){}); }catch(e){}
+  }
+}
+
 function start(){
   if(!window.ZXing){ fail('โหลดตัวอ่านบาร์โค้ดไม่สำเร็จ — ตรวจสัญญาณอินเทอร์เน็ต'); return; }
-  reader = reader || new ZXing.BrowserMultiFormatReader(hints(), 300);
+  try{
+    reader = reader || new ZXing.BrowserMultiFormatReader(hints(), 300);
+  }catch(e){ fail('เริ่มตัวอ่านบาร์โค้ดไม่สำเร็จ'); return; }
+
   var constraints = devices.length
     ? { video:{ deviceId:{ exact: devices[devIdx].deviceId }, width:{ideal:1280} } }
     : { video:{ facingMode:{ideal:'environment'}, width:{ideal:1280} } };
+
   reader.decodeFromConstraints(constraints, 'video', function(res){ if(res) onHit(res.getText()); })
     .then(function(){
-      $('msg').textContent='เล็งบาร์โค้ดหรือ QR ให้อยู่ในกรอบ';
-      ZXing.BrowserCodeReader.listVideoInputDevices().then(function(d){
-        devices=d||[]; $('swBtn').classList.toggle('hide', devices.length<2);
-      }).catch(function(){});
+      /* กล้องติดแล้ว — โชว์ภาพก่อนเป็นอย่างแรก */
+      try{
+        $('err').classList.add('hide');
+        $('video').style.display=''; $('ret').style.display='';
+        $('msg').textContent='เล็งบาร์โค้ดหรือ QR ให้อยู่ในกรอบ';
+      }catch(e){}
+      try{ listCams(); }catch(e){}   // ของเสริม ล้มได้ ไม่กระทบกล้อง
     })
     .catch(function(e){ fail(reason(e)); });
 }
@@ -152,7 +185,17 @@ function reason(e){
 function fail(m){
   $('video').style.display='none'; $('ret').style.display='none';
   $('msg').textContent='';
-  var el=$('err'); el.classList.remove('hide'); el.textContent='⚠ '+m+' — พิมพ์รหัสด้านล่างแทนได้';
+  var el=$('err'); el.classList.remove('hide');
+  el.innerHTML='⚠ '+String(m).replace(/[<>]/g,'')+' — พิมพ์รหัสด้านล่างแทนได้'+
+    '<br><button class="btn" style="margin-top:9px;background:#d4a017" onclick="retry()">ลองเปิดกล้องอีกครั้ง</button>';
+}
+function retry(){
+  try{ if(reader) reader.reset(); }catch(e){}
+  devices=[]; devIdx=0;
+  $('err').classList.add('hide');
+  $('video').style.display=''; $('ret').style.display='';
+  $('msg').textContent='กำลังเปิดกล้อง…';
+  setTimeout(start, 120);
 }
 window.addEventListener('load', function(){ if(framed()) warnFramed(); else start(); });
 </script>
